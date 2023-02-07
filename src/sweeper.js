@@ -19,7 +19,7 @@ function BlockIoSweep(network, bip32_private_key_1, private_key_2, destination_a
     this.n = n || BlockIoSweep.DEFAULT_N
 
     if (options && typeof (options) === 'object') {
-        this.maxBalanceToSweep = options.maxBalanceToSweep;
+        this.maxBalanceToSweep = options.maxBalanceToSweep || 0;
         this.provider = options.provider || BlockIoSweep.DEFAULT_BLOCKCHAIN_PROVIDER
         this.feeRate = options.feeRate || BlockIoSweep.DEFAULT_FEE_RATE[network]
         this.maxTxInputs = options.maxTxInputs || BlockIoSweep.DEFAULT_MAX_TX_INPUTS
@@ -103,14 +103,7 @@ BlockIoSweep.prototype.begin = async function () {
 
                 const utxo = utxoMap[address].tx[i]
 
-                if(this.maxBalanceToSweep && this.maxBalanceToSweep > utxo.value) {
-                    console.log("UTXO VALUE BELOW MAXBALANCE VALUE!")
-                    continue;
-                } else if (this.maxBalanceToSweep) {
-                    balToSweep = this.maxBalanceToSweep;
-                } else {
-                    balToSweep += utxo.value
-                }
+                balToSweep += utxo.value
 
                 delete utxo.value
                 const input = {
@@ -128,12 +121,14 @@ BlockIoSweep.prototype.begin = async function () {
 
                     // create the transaction without network fees
                     const tempPsbt = psbt.clone()
-                    createAndFinalizeTx(tempPsbt, this.toAddr, balToSweep, 0, ecKeys, this.privateKey2, this.networkObj)
+                    createAndFinalizeTx(tempPsbt, this.toAddr, balToSweep, 0, ecKeys, this.privateKey2, this.networkObj, address, this.maxBalanceToSweep)
 
                     // we know the size of the transaction now,
                     // calculate the network fee, and recreate the appropriate transaction
                     const networkFee = getNetworkFee(this.network, tempPsbt, this.feeRate)
-                    createAndFinalizeTx(psbt, this.toAddr, balToSweep, networkFee, ecKeys, this.privateKey2, this.networkObj)
+                    console.log(networkFee)
+
+                    createAndFinalizeTx(psbt, this.toAddr, balToSweep, networkFee, ecKeys, this.privateKey2, this.networkObj, address, this.maxBalanceToSweep)
 
                     if (psbt.getFee() > constants.NETWORK_FEE_MAX[this.network]) {
                         throw new Error(' *** WARNING: max network fee exceeded. This transaction has a network fee of ' + psbt.getFee().toString() + ' sats, whereas the maximum network fee allowed is ' + constants.NETWORK_FEE_MAX[this.network].toString() + ' sats')
@@ -190,15 +185,29 @@ BlockIoSweep.prototype.begin = async function () {
 
 module.exports = BlockIoSweep
 
-function createAndFinalizeTx(psbt, toAddr, balance, networkFee, ecKeys, privKey2, network) {
+function createAndFinalizeTx(psbt, toAddr, totalBalance, networkFee, ecKeys, privKey2, network, changeAddress, maxBalance) {
     // balance and network fee are in COIN
 
-    const val = balance - networkFee
+    const val = totalBalance - networkFee
+    const maxBalanceFinal = parseInt(maxBalance)
 
-    psbt.addOutput({
-        address: toAddr, // destination address
-        value: val // value in sats
-    })
+    if(maxBalance > 0) {
+
+        psbt.addOutput({
+            address: toAddr, // destination address
+            value: maxBalanceFinal // value in sats
+        })
+
+        psbt.addOutput({
+            address: changeAddress,
+            value: val - maxBalanceFinal
+        })
+    } else {
+        psbt.addOutput({
+            address: toAddr, // destination address
+            value: val // value in sats
+        })
+    }
 
     for (let i = 0; i < psbt.txInputs.length; i++) {
         psbt.signInput(i, ecKeys[i])
@@ -212,9 +221,9 @@ function getNetworkFee(network, psbt, feeRate) {
     const tx = psbt.extractTransaction()
     const vSize = tx.virtualSize() // in bytes
 
-    let f = feeRate * vSize
+    console.log(feeRate)
 
-    return f
+    return feeRate * vSize
 }
 
 function getCoinValue(floatAsString) {
@@ -270,7 +279,7 @@ async function addAddrToMap(balanceMap, addrType, i, bip32Priv, pubKey, networkO
         // get the unspent transactions for the derived address
         const addrUtxo = await providerService.getUtxo(payment.address)
 
-        if(addrUtxo.length === 0) {
+        if (addrUtxo.length === 0) {
             continue;
         } else {
             console.log('balance found at ' + i + ' addresss: ' + payment.address)
