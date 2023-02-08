@@ -296,7 +296,7 @@ async function addAddrToMap(balanceMap, addrType, i, bip32Priv, pubKey, networkO
 
             const unspentObj = {}
             unspentObj.hash = addrUtxo[x].tx_hash
-            unspentObj.index = x
+            unspentObj.index = addrUtxo[x].tx_output_n
             unspentObj.value = addrUtxo[x].value
 
             switch (addrType) {
